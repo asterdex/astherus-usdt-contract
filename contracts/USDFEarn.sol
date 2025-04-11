@@ -26,12 +26,14 @@ contract USDFEarn is Initializable, PausableUpgradeable, AccessControlEnumerable
     bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
     bytes32 public constant PAUSE_ROLE = keccak256("PAUSE_ROLE");
     bytes32 public constant BOT_ROLE = keccak256("BOT_ROLE");
+    bytes32 public constant CEFFU_ROLE = keccak256("CEFFU_ROLE");
 
     event UpdateUSDTDepositEnabled(bool oldUSDTDepositEnabled, bool newUSDTDepositEnabled);
     event UpdateUSDFMaxSupply(uint256 oldUSDFMaxSupply, uint256 newUSDFMaxSupply);
     event UpdateCommissionRate(uint256 oldCommissionRate, uint256 newCommissionRate);
     event UpdateBurnCommissionRate(uint256 oldCommissionRate, uint256 newCommissionRate);
     event UpdateCeffuAddress(address oldCeffuAddress, address newCeffuAddress);
+    event UpdateCeffuAddress(address ceffuAddress, bool enable);
     event UpdateTransferToCeffuEnabled(bool oldTransferToCeffuEnabled, bool newTransferToCeffuEnabled);
     event TransferToCeffu(IERC20 indexed token, uint256 USDTAmount, address ceffuAddress);
     event MintUSDF(address indexed sender, IERC20 indexed USDT, IERC20 indexed USDF, uint256 amountIn, uint256 USDFAmount);
@@ -140,6 +142,23 @@ contract USDFEarn is Initializable, PausableUpgradeable, AccessControlEnumerable
         emit UpdateUSDFMaxSupply(oldUSDFMaxSupply, USDFMaxSupply);
     }
 
+    /**
+     * @dev set a new ceffu address
+     * @notice only ADMIN_ROLE can do this
+     * @param _ceffuAddress the address to set
+     * @param _enable add or delete
+     */
+    function updateCeffuAddress(address _ceffuAddress, bool _enable) external onlyRole(ADMIN_ROLE) {
+        require(_ceffuAddress != address(0), "ceffuAddress cannot be a zero address");
+        require(hasRole(CEFFU_ROLE, _ceffuAddress) != _enable, "already set");
+        if (_enable) {
+            _grantRole(CEFFU_ROLE, _ceffuAddress);
+        } else {
+            _revokeRole(CEFFU_ROLE, _ceffuAddress);
+        }
+        emit UpdateCeffuAddress(_ceffuAddress, _enable);
+    }
+
     function updateCeffuAddress(address _ceffuAddress) external onlyRole(ADMIN_ROLE) {
         require(_ceffuAddress != address(0), "ceffuAddress cannot be a zero address");
 
@@ -158,7 +177,6 @@ contract USDFEarn is Initializable, PausableUpgradeable, AccessControlEnumerable
         emit UpdateTransferToCeffuEnabled(oldTransferToCeffuEnabled, transferToCeffuEnabled);
     }
 
-
     function deposit(uint256 amountIn) external nonReentrant whenNotPaused {
         _mintUSDF(amountIn, msg.sender);
     }
@@ -172,6 +190,22 @@ contract USDFEarn is Initializable, PausableUpgradeable, AccessControlEnumerable
         AsUSDF.safeTransfer(msg.sender, asUSDFBalanceAfter - asUSDFBalanceBefore);
         USDF.approve(address(AsUSDFEarn), 0);
     }
+
+    /**
+     * @dev transfer amount to ceffuAddress
+     */
+    function transferToCeffu() external nonReentrant onlyRole(BOT_ROLE) {
+        if (transferToCeffuEnabled) {
+            require(ceffuAddress != address(0), "ceffuAddress cannot be a zero address");
+            uint256 amount = USDT.balanceOf(address(this));
+            require(amount > 0 , "Insufficient balance");
+
+            USDT.safeTransfer(ceffuAddress, amount);
+            emit TransferToCeffu(USDT, amount, ceffuAddress);
+        }
+    }
+
+
 
     /**
       * @dev mint USDF token
@@ -193,16 +227,17 @@ contract USDFEarn is Initializable, PausableUpgradeable, AccessControlEnumerable
     }
 
     /**
-     * @dev transfer amount to ceffuAddress
-      */
-    function transferToCeffu() external nonReentrant onlyRole(BOT_ROLE) {
+     * @dev transfer USDT to ceffuAddress
+     * @notice only BOT_ROLE can call
+     * @param _ceffuAddress the address to transfer
+     * @param _amount the amount to transfer
+     */
+    function transferToCeffu(address _ceffuAddress, uint _amount) external nonReentrant onlyRole(BOT_ROLE) {
         if (transferToCeffuEnabled) {
-            require(ceffuAddress != address(0), "ceffuAddress cannot be a zero address");
-            uint256 amount = USDT.balanceOf(address(this));
-            require(amount > 0 , "Insufficient balance");
-
-            USDT.safeTransfer(ceffuAddress, amount);
-            emit TransferToCeffu(USDT, amount, ceffuAddress);
+            require(_amount > 0, "illegal amount"); 
+            require(hasRole(CEFFU_ROLE, _ceffuAddress), "illegal ceffu address");
+            USDT.safeTransfer(_ceffuAddress, _amount);
+            emit TransferToCeffu(USDT, _amount, _ceffuAddress);
         }
     }
 
